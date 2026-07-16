@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 260px; font: 13px/1.6 -apple-system, sans-serif; margin: 12px; }
+  button { width: 100%; padding: 10px; border: none; border-radius: 8px; font: inherit;
+    background: #e67e22; color: #fff; cursor: pointer; }
+  button:hover { opacity: .9; }
+  label { display: block; margin-top: 12px; font-size: 11px; font-weight: 600; }
+  input { width: 100%; box-sizing: border-box; padding: 5px 7px; border: 1px solid #ccc; border-radius: 6px; }
+  a { display: inline-block; margin-top: 10px; font-size: 12px; }
+  #msg { font-size: 11px; color: #c0392b; margin-top: 8px; }
+  .hint { font-size: 10px; color: #999; margin-top: 3px; }
+</style>
+</head>
+<body>
+  <button id="pick">🎯 要素を選択して監視登録</button>
+  <label>サーバURL <input id="apiBase"></label>
+  <label>デフォルトWebhook URL <input id="defaultWebhook" placeholder="https://discord.com/api/webhooks/…"></label>
+  <div class="hint">登録フォームに自動入力されます。個別に別のURLを入れた場合はこの既定値は変わりません。</div>
+  <a id="dashboard" href="#" target="_blank">📋 監視一覧を開く</a>
+  <div id="msg"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

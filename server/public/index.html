@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChangeNotifier</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { border-bottom: 1px solid #8884; padding: .5rem .6rem; text-align: left; vertical-align: top; }
+  td.value { max-width: 260px; overflow-wrap: anywhere; }
+  button { cursor: pointer; padding: .25rem .6rem; border-radius: 6px; border: 1px solid #8886; background: transparent; }
+  button:hover { background: #8882; }
+  .muted { opacity: .6; font-size: .8rem; }
+  .error { color: #d33; font-size: .8rem; }
+  .badge { font-size: .75rem; padding: .1rem .5rem; border-radius: 999px; border: 1px solid #8886; }
+  .on { color: #2a2; border-color: #2a2; }
+  .off { color: #999; }
+  tr.history-row td { background: #8881; font-size: .8rem; }
+  #empty { margin: 2rem 0; opacity: .7; }
+</style>
+</head>
+<body>
+<h1>🔔 ChangeNotifier — 監視一覧</h1>
+<p class="muted">要素の登録はChrome拡張から行います。ここでは状態確認・手動チェック・削除ができます。</p>
+<div id="empty" hidden>まだ監視対象がありません。Chrome拡張でページの要素を選択して登録してください。</div>
+<table id="tbl" hidden>
+  <thead>
+    <tr><th>名前</th><th>状態</th><th>間隔</th><th>現在の値</th><th>最終チェック</th><th></th></tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+<script>
+const rows = document.getElementById("rows");
+const tbl = document.getElementById("tbl");
+const empty = document.getElementById("empty");
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  return res.json();
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+async function load() {
+  const watches = await api("/api/watches");
+  tbl.hidden = watches.length === 0;
+  empty.hidden = watches.length > 0;
+  rows.innerHTML = watches.map(w => `
+    <tr data-id="${w.id}">
+      <td><a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.name)}</a><br>
+          <span class="muted">${esc(w.selector)}</span></td>
+      <td><span class="badge ${w.enabled ? "on" : "off"}">${w.enabled ? "監視中" : "停止"}</span></td>
+      <td>
+        <select data-act="interval">
+          ${[["5","5分"],["15","15分"],["30","30分"],["60","1時間"],["180","3時間"],["720","12時間"],["1440","1日"]]
+            .map(([v,l]) => `<option value="${v}" ${Number(v)===w.interval_minutes?"selected":""}>${l}</option>`).join("")}
+          ${[5,15,30,60,180,720,1440].includes(w.interval_minutes)?"":`<option value="${w.interval_minutes}" selected>${w.interval_minutes}分</option>`}
+        </select>
+      </td>
+      <td class="value">${esc(w.last_value ?? "—")}${w.last_error ? `<div class="error">⚠ ${esc(w.last_error)}</div>` : ""}</td>
+      <td class="muted">${w.last_checked_at ? esc(w.last_checked_at) + " UTC" : "—"}</td>
+      <td>
+        <button data-act="check">今すぐ</button>
+        <button data-act="toggle">${w.enabled ? "停止" : "再開"}</button>
+        <button data-act="history">履歴</button>
+        <button data-act="del">削除</button>
+      </td>
+    </tr>`).join("");
+}
+
+rows.addEventListener("change", async (e) => {
+  const sel = e.target.closest("select[data-act='interval']");
+  if (!sel) return;
+  const id = sel.closest("tr").dataset.id;
+  try {
+    await api(`/api/watches/${id}/interval`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ interval_minutes: Number(sel.value) }),
+    });
+  } catch (err) {
+    alert("間隔の変更に失敗: " + err.message);
+    await load();
+  }
+});
+
+rows.addEventListener("click", async (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  const tr = btn.closest("tr");
+  const id = tr.dataset.id;
+  const act = btn.dataset.act;
+  try {
+    if (act === "check") {
+      btn.disabled = true; btn.textContent = "確認中…";
+      const r = await api(`/api/watches/${id}/check`, { method: "POST" });
+      alert(r.changed ? "変更が検知されました!" : "変更なし");
+      await load();
+    } else if (act === "toggle") {
+      const enabled = tr.querySelector(".badge").classList.contains("on");
+      await api(`/api/watches/${id}/enabled`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !enabled }),
+      });
+      await load();
+    } else if (act === "del") {
+      if (!confirm("この監視対象を削除しますか?")) return;
+      await api(`/api/watches/${id}`, { method: "DELETE" });
+      await load();
+    } else if (act === "history") {
+      const next = tr.nextElementSibling;
+      if (next && next.classList.contains("history-row")) { next.remove(); return; }
+      const hist = await api(`/api/watches/${id}/history`);
+      const html = hist.length
+        ? hist.map(h => `${esc(h.changed_at)} UTC: 「${esc(h.old_value ?? "")}」→「${esc(h.new_value)}」`).join("<br>")
+        : "変更履歴はまだありません";
+      tr.insertAdjacentHTML("afterend", `<tr class="history-row"><td colspan="6">${html}</td></tr>`);
+    }
+  } catch (err) {
+    alert("エラー: " + err.message);
+    await load();
+  }
+});
+
+load();
+setInterval(load, 60_000);
+</script>
+</body>
+</html>

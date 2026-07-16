@@ -1,0 +1,12 @@
+services:
+  server:
+    build: ./server
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./data:/data
+    environment:
+      # 全監視共通のデフォルト通知先(監視ごとに個別指定も可能)
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+    init: true
+    restart: unless-stopped
