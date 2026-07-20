@@ -21,16 +21,25 @@ defaultWebhookInput.addEventListener("change", () => {
   chrome.storage.sync.set({ defaultWebhook: defaultWebhookInput.value.trim() });
 });
 
-document.getElementById("pick").addEventListener("click", async () => {
+async function startPicker(mode) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/^https?:/.test(tab.url ?? "")) {
     msg.textContent = "このページでは使えません(http/httpsのページで開いてください)";
     return;
   }
   try {
+    // 注入前にモードをページ側グローバルへ渡す
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (m) => { window.__cnPickerMode = m; },
+      args: [mode],
+    });
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["picker.js"] });
     window.close();
   } catch (e) {
     msg.textContent = "注入失敗: " + e.message;
   }
-});
+}
+
+document.getElementById("pick").addEventListener("click", () => startPicker("value"));
+document.getElementById("pickKeyword").addEventListener("click", () => startPicker("keyword"));

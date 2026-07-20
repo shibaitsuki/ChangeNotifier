@@ -18,6 +18,7 @@
   .badge { font-size: .75rem; padding: .1rem .5rem; border-radius: 999px; border: 1px solid #8886; }
   .on { color: #2a2; border-color: #2a2; }
   .off { color: #999; }
+  .kw { color: #2980b9; border-color: #2980b9; margin-left: .4rem; }
   tr.history-row td { background: #8881; font-size: .8rem; }
   #empty { margin: 2rem 0; opacity: .7; }
 </style>
@@ -47,14 +48,28 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+// キーワードモードの last_value はマッチ項目のJSON配列。件数+プレビューで表示する。
+function valueCell(w) {
+  if (w.mode === "keyword") {
+    let items = [];
+    try { items = JSON.parse(w.last_value ?? "[]"); } catch { items = []; }
+    if (!Array.isArray(items) || items.length === 0) return '<span class="muted">マッチ0件</span>';
+    const preview = items.slice(0, 3).map(esc).join("<br>");
+    return `<b>${items.length}件マッチ</b><br><span class="muted">${preview}${items.length > 3 ? "<br>…" : ""}</span>`;
+  }
+  return esc(w.last_value ?? "—");
+}
+
 async function load() {
   const watches = await api("/api/watches");
   tbl.hidden = watches.length === 0;
   empty.hidden = watches.length > 0;
   rows.innerHTML = watches.map(w => `
     <tr data-id="${w.id}">
-      <td><a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.name)}</a><br>
-          <span class="muted">${esc(w.selector)}</span></td>
+      <td><a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.name)}</a>
+          ${w.mode === "keyword"
+            ? `<span class="badge kw">🔎 キーワード</span><br><span class="muted">「${esc(w.keyword ?? "")}」 範囲: ${esc(w.selector || "ページ全体")}</span>`
+            : `<br><span class="muted">${esc(w.selector)}</span>`}</td>
       <td><span class="badge ${w.enabled ? "on" : "off"}">${w.enabled ? "監視中" : "停止"}</span></td>
       <td>
         <select data-act="interval">
@@ -63,7 +78,7 @@ async function load() {
           ${[5,15,30,60,180,720,1440].includes(w.interval_minutes)?"":`<option value="${w.interval_minutes}" selected>${w.interval_minutes}分</option>`}
         </select>
       </td>
-      <td class="value">${esc(w.last_value ?? "—")}${w.last_error ? `<div class="error">⚠ ${esc(w.last_error)}</div>` : ""}</td>
+      <td class="value">${valueCell(w)}${w.last_error ? `<div class="error">⚠ ${esc(w.last_error)}</div>` : ""}</td>
       <td class="muted">${w.last_checked_at ? esc(w.last_checked_at) + " UTC" : "—"}</td>
       <td>
         <button data-act="check">今すぐ</button>

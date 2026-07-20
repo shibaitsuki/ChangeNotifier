@@ -1,6 +1,9 @@
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 
 let browser: Browser | null = null;
+
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 async function getBrowser(): Promise<Browser> {
   if (!browser || !browser.isConnected()) {
@@ -22,14 +25,10 @@ export async function closeBrowser(): Promise<void> {
   }
 }
 
-/** ページを開き、セレクタに一致する要素のテキストを取得して正規化する */
-export async function fetchValue(url: string, selector: string): Promise<string> {
+/** ページを開いてnavigate・HTTPステータス確認まで行い、コールバックに渡す */
+async function withPage<T>(url: string, fn: (page: Page) => Promise<T>): Promise<T> {
   const b = await getBrowser();
-  const context = await b.newContext({
-    userAgent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    locale: "ja-JP",
-  });
+  const context = await b.newContext({ userAgent: USER_AGENT, locale: "ja-JP" });
   try {
     const page = await context.newPage();
     const resp = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
@@ -40,6 +39,15 @@ export async function fetchValue(url: string, selector: string): Promise<string>
         `ページがHTTP ${status}を返しました(botブロックやログイン必須の可能性)。要素は取得できません。`
       );
     }
+    return await fn(page);
+  } finally {
+    await context.close();
+  }
+}
+
+/** [値監視] セレクタに一致する要素のテキストを取得して正規化する */
+export async function fetchValue(url: string, selector: string): Promise<string> {
+  return withPage(url, async (page) => {
     const el = page.locator(selector).first();
     try {
       await el.waitFor({ state: "attached", timeout: 15_000 });
@@ -50,9 +58,69 @@ export async function fetchValue(url: string, selector: string): Promise<string>
     }
     const text = (await el.textContent()) ?? "";
     return normalize(text);
-  } finally {
-    await context.close();
-  }
+  });
+}
+
+/**
+ * [キーワード監視] 範囲内で keyword を含む「最内側の要素」を項目単位として集める。
+ * withContext=true なら、最内側から繰り返し兄弟が現れる階層まで遡って文脈込みにする。
+ * container が空ならページ全体を対象。返り値は重複除去済みの項目テキスト配列。
+ */
+export async function fetchKeywordMatches(
+  url: string,
+  keyword: string,
+  container: string | null,
+  withContext: boolean
+): Promise<string[]> {
+  return withPage(url, async (page) => {
+    // 動的生成されるリストのために少し待つ
+    await page.waitForTimeout(1500);
+    const result = await page.evaluate(
+      ({ keyword, container, withContext }) => {
+        const root: Element | null = container
+          ? document.querySelector(container)
+          : document.body;
+        if (!root) return null; // コンテナが見つからない → 呼び出し側でエラー扱い
+
+        const has = (el: Element) => (el.textContent ?? "").includes(keyword);
+        const sig = (el: Element) => el.tagName + "|" + Array.from(el.classList).join(".");
+
+        const items: string[] = [];
+        for (const el of Array.from(root.querySelectorAll("*"))) {
+          if (!has(el)) continue;
+          // 最内側判定: 子孫のいずれもキーワードを含まない = 出現箇所の最小の器
+          if (Array.from(el.children).some((c) => has(c))) continue;
+
+          let unit: Element = el;
+          if (withContext) {
+            // 同じ構造の兄弟が複数いる祖先(=繰り返し項目)まで遡る
+            let cur: Element = el;
+            while (cur !== root && cur.parentElement) {
+              const twins = Array.from(cur.parentElement.children).filter(
+                (s) => sig(s) === sig(cur)
+              );
+              if (twins.length >= 2) {
+                unit = cur;
+                break;
+              }
+              cur = cur.parentElement;
+            }
+          }
+          const text = (unit.textContent ?? "").replace(/\s+/g, " ").trim();
+          if (text) items.push(text);
+        }
+        return Array.from(new Set(items));
+      },
+      { keyword, container, withContext }
+    );
+
+    if (result === null) {
+      throw new Error(
+        `監視範囲(コンテナ)が見つかりません: ${container}(ページ構造が変わった可能性)`
+      );
+    }
+    return result;
+  });
 }
 
 function normalize(text: string): string {

@@ -7,6 +7,7 @@
   button { width: 100%; padding: 10px; border: none; border-radius: 8px; font: inherit;
     background: #e67e22; color: #fff; cursor: pointer; }
   button:hover { opacity: .9; }
+  button.secondary { background: #2980b9; margin-top: 8px; }
   label { display: block; margin-top: 12px; font-size: 11px; font-weight: 600; }
   input { width: 100%; box-sizing: border-box; padding: 5px 7px; border: 1px solid #ccc; border-radius: 6px; }
   a { display: inline-block; margin-top: 10px; font-size: 12px; }
@@ -16,6 +17,7 @@
 </head>
 <body>
   <button id="pick">🎯 要素を選択して監視登録</button>
+  <button id="pickKeyword" class="secondary">🔎 キーワード出現を監視</button>
   <label>サーバURL <input id="apiBase"></label>
   <label>デフォルトWebhook URL <input id="defaultWebhook" placeholder="https://discord.com/api/webhooks/…"></label>
   <div class="hint">登録フォームに自動入力されます。個別に別のURLを入れた場合はこの既定値は変わりません。</div>

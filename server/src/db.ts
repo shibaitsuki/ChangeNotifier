@@ -20,7 +20,12 @@ CREATE TABLE IF NOT EXISTS watches (
   last_value TEXT,
   last_checked_at TEXT,
   last_error TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  mode TEXT NOT NULL DEFAULT 'value',
+  keyword TEXT,
+  with_context INTEGER NOT NULL DEFAULT 0,
+  notify_removed INTEGER NOT NULL DEFAULT 0,
+  ignore_pattern TEXT
 );
 CREATE TABLE IF NOT EXISTS history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,18 +36,44 @@ CREATE TABLE IF NOT EXISTS history (
 );
 `);
 
+// 既存DB(キーワードモード列が無い頃に作られたもの)向けのマイグレーション。
+// CREATE TABLE IF NOT EXISTS は既存テーブルに列を足さないので、個別にALTERする。
+const existingCols = new Set(
+  (db.prepare("PRAGMA table_info(watches)").all() as { name: string }[]).map((c) => c.name)
+);
+const addColumn = (name: string, ddl: string) => {
+  if (!existingCols.has(name)) db.exec(`ALTER TABLE watches ADD COLUMN ${ddl}`);
+};
+addColumn("mode", "mode TEXT NOT NULL DEFAULT 'value'");
+addColumn("keyword", "keyword TEXT");
+addColumn("with_context", "with_context INTEGER NOT NULL DEFAULT 0");
+addColumn("notify_removed", "notify_removed INTEGER NOT NULL DEFAULT 0");
+addColumn("ignore_pattern", "ignore_pattern TEXT");
+
+export type WatchMode = "value" | "keyword";
+
 export interface Watch {
   id: number;
   name: string;
   url: string;
+  /** value: 監視する要素。keyword: 監視範囲のコンテナ(空文字ならページ全体) */
   selector: string;
   interval_minutes: number;
   webhook_url: string | null;
   enabled: number;
+  /** value: 前回の要素テキスト。keyword: 前回マッチした項目テキストのJSON配列 */
   last_value: string | null;
   last_checked_at: string | null;
   last_error: string | null;
   created_at: string;
+  mode: WatchMode;
+  keyword: string | null;
+  /** keyword: 最内側だけでなく繰り返し兄弟の階層まで文脈を含める */
+  with_context: number;
+  /** keyword: 消失した項目も通知する */
+  notify_removed: number;
+  /** keyword: 同一判定の前に取り除く正規表現(変動する数字列などのノイズ除去) */
+  ignore_pattern: string | null;
 }
 
 export interface HistoryRow {
@@ -67,12 +98,30 @@ export function createWatch(w: {
   selector: string;
   interval_minutes: number;
   webhook_url?: string | null;
+  mode?: WatchMode;
+  keyword?: string | null;
+  with_context?: boolean;
+  notify_removed?: boolean;
+  ignore_pattern?: string | null;
 }): Watch {
   const info = db
     .prepare(
-      "INSERT INTO watches (name, url, selector, interval_minutes, webhook_url) VALUES (?, ?, ?, ?, ?)"
+      `INSERT INTO watches
+       (name, url, selector, interval_minutes, webhook_url, mode, keyword, with_context, notify_removed, ignore_pattern)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(w.name, w.url, w.selector, w.interval_minutes, w.webhook_url ?? null);
+    .run(
+      w.name,
+      w.url,
+      w.selector,
+      w.interval_minutes,
+      w.webhook_url ?? null,
+      w.mode ?? "value",
+      w.keyword ?? null,
+      w.with_context ? 1 : 0,
+      w.notify_removed ? 1 : 0,
+      w.ignore_pattern ?? null
+    );
   return getWatch(Number(info.lastInsertRowid))!;
 }
 
