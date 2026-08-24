@@ -9,6 +9,10 @@ COPY src ./src
 COPY public ./public
 RUN npm run build
 
+# 同梱Chromiumではなく実Google Chromeを使う(x86_64限定)。
+# CloudflareのBot ManagementはバンドルChromiumのTLS/JA3指紋を検知することがあるため。
+RUN npx playwright install --with-deps chrome
+
 ENV DATA_DIR=/data
 EXPOSE 8787
 # ヘッドフルChromiumを動かすため仮想ディスプレイ(Xvfb)上でnodeを起動する。

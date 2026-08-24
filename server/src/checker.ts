@@ -10,13 +10,29 @@ async function getBrowser(): Promise<Browser> {
     // ヘッドフル(headless:false)で起動する。Akamai等のbot対策はヘッドレスを検知して
     // 403を返すため、実ブラウザ相当のヘッドフルが必要。画面のないサーバ上ではXvfb
     // (仮想ディスプレイ)経由で動かす(Dockerではxvfb-runでnodeを起動)。
+    // channel:"chrome" でPlaywright同梱Chromiumではなく実Google Chromeを使う。
+    // CloudflareのBot Managementはバンドル版ChromiumのTLS/JA3指紋を検知することがあるため。
     browser = await chromium.launch({
       headless: false,
+      channel: "chrome",
       args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
     });
   }
   return browser;
 }
+
+// navigator.webdriver等、自動操作の痕跡を消すステルスパッチ
+const STEALTH_INIT_SCRIPT = `
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+  Object.defineProperty(navigator, 'languages', { get: () => ['ja-JP', 'ja', 'en-US', 'en'] });
+  window.chrome = window.chrome || { runtime: {} };
+  const originalQuery = window.navigator.permissions.query;
+  window.navigator.permissions.query = (parameters) =>
+    parameters.name === 'notifications'
+      ? Promise.resolve({ state: Notification.permission })
+      : originalQuery(parameters);
+`;
 
 export async function closeBrowser(): Promise<void> {
   if (browser) {
@@ -29,6 +45,7 @@ export async function closeBrowser(): Promise<void> {
 async function withPage<T>(url: string, fn: (page: Page) => Promise<T>): Promise<T> {
   const b = await getBrowser();
   const context = await b.newContext({ userAgent: USER_AGENT, locale: "ja-JP" });
+  await context.addInitScript(STEALTH_INIT_SCRIPT);
   try {
     const page = await context.newPage();
     const resp = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
