@@ -1,23 +1,22 @@
 import { chromium, type Browser, type Page } from "playwright";
 
-let browser: Browser | null = null;
+const browsers = new Set<Browser>();
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 async function getBrowser(): Promise<Browser> {
-  if (!browser || !browser.isConnected()) {
-    // ヘッドフル(headless:false)で起動する。Akamai等のbot対策はヘッドレスを検知して
-    // 403を返すため、実ブラウザ相当のヘッドフルが必要。画面のないサーバ上ではXvfb
-    // (仮想ディスプレイ)経由で動かす(Dockerではxvfb-runでnodeを起動)。
-    // channel:"chrome" でPlaywright同梱Chromiumではなく実Google Chromeを使う。
-    // CloudflareのBot Managementはバンドル版ChromiumのTLS/JA3指紋を検知することがあるため。
-    browser = await chromium.launch({
-      headless: false,
-      channel: "chrome",
-      args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-    });
-  }
+  // ヘッドフル(headless:false)で起動する。Akamai等のbot対策はヘッドレスを検知して
+  // 403を返すため、実ブラウザ相当のヘッドフルが必要。画面のないサーバ上ではXvfb
+  // (仮想ディスプレイ)経由で動かす(Dockerではxvfb-runでnodeを起動)。
+  // channel:"chrome" でPlaywright同梱Chromiumではなく実Google Chromeを使う。
+  // CloudflareのBot Managementはバンドル版ChromiumのTLS/JA3指紋を検知することがあるため。
+  const browser = await chromium.launch({
+    headless: false,
+    channel: "chrome",
+    args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+  });
+  browsers.add(browser);
   return browser;
 }
 
@@ -35,18 +34,17 @@ const STEALTH_INIT_SCRIPT = `
 `;
 
 export async function closeBrowser(): Promise<void> {
-  if (browser) {
-    await browser.close().catch(() => {});
-    browser = null;
-  }
+  await Promise.all([...browsers].map((browser) => browser.close().catch(() => {})));
+  browsers.clear();
 }
 
 /** ページを開いてnavigate・HTTPステータス確認まで行い、コールバックに渡す */
 async function withPage<T>(url: string, fn: (page: Page) => Promise<T>): Promise<T> {
   const b = await getBrowser();
-  const context = await b.newContext({ userAgent: USER_AGENT, locale: "ja-JP" });
-  await context.addInitScript(STEALTH_INIT_SCRIPT);
   try {
+    // チェックごとに起動し直し、長期稼働したChromeの不調を次の監視へ持ち越さない。
+    const context = await b.newContext({ userAgent: USER_AGENT, locale: "ja-JP" });
+    await context.addInitScript(STEALTH_INIT_SCRIPT);
     const page = await context.newPage();
     const resp = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     const status = resp?.status();
@@ -58,7 +56,8 @@ async function withPage<T>(url: string, fn: (page: Page) => Promise<T>): Promise
     }
     return await fn(page);
   } finally {
-    await context.close();
+    await b.close().catch(() => {});
+    browsers.delete(b);
   }
 }
 
